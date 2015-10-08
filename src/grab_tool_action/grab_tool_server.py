@@ -366,8 +366,7 @@ class toolPickingServer(): #object):
                     return False 
                 else:
                     return False
-#def main():
-if __name__=="__main__":
+def main():
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('grab_tool_server', anonymous=True)
     toolPickingServer()
