@@ -1,9 +1,0 @@
-#goal definition
-string tag_topic
-string arm
----
-#result definition
-bool success
----
-#feedback
-string goal_status
