@@ -277,25 +277,33 @@ class toolPickingServer(): #object):
         if arm is 'r' and success and not self._as.is_preempt_requested():
             waypoints=self.rgripperPose
             self.group_rightarm.set_pose_reference_frame(waypoints.header.frame_id)
-            waypoints.pose.position.x=waypoints.pose.position.x+0.08
-            #waypoints.pose.position.x=waypoints.pose.position.z-0.02
+            waypoints.pose.position.x=0.1
+            waypoints.pose.position.y=0.0
+            waypoints.pose.position.z=0.0
             waypoints.pose.orientation.x=0  
             waypoints.pose.orientation.y=0
             waypoints.pose.orientation.z=0
-            waypoints.pose.orientation.w=1 
+            waypoints.pose.orientation.w=0 
             print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
             jump_threshold=0.0    
             avoid_collisions=False   
             plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints.pose], eef_step, jump_threshold, avoid_collisions )
-            if len(plan.joint_trajectory.points)<1: # or fraction<0.25:
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
                 return False
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
             waypoints=self.lgripperPose
             self.group_leftarm.set_pose_reference_frame(waypoints.header.frame_id)
-            waypoints.pose.position.x=waypoints.pose.position.x+0.08    
+            waypoints.pose.position.x=0.1
+            waypoints.pose.position.y=0.0
+            waypoints.pose.position.z=0.0
+            waypoints.pose.orientation.x=0  
+            waypoints.pose.orientation.y=0
+            waypoints.pose.orientation.z=0
+            waypoints.pose.orientation.w=0 
+            print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
             jump_threshold=0.0    
             avoid_collisions=False   
