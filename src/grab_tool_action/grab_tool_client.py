@@ -23,12 +23,14 @@ class GrabToolClient (object):
         print('done waiting for server')
         goal=GrabToolGoal()
         goal.tag_topic='ar_marker_4'
+        goal.arm='l'
         self.client.send_goal(goal)
         self.client.wait_for_result()
         result=self.client.get_result()
 
 
 def main():
+#if __name__=="__main__":
     rospy.init_node('grab_tool_client')
     GrabToolClient()
     while not rospy.is_shutdown():

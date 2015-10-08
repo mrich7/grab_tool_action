@@ -29,12 +29,12 @@ class toolPickingServer(): #object):
         #Turn on MoveIt and groups for arms and grippers
         robot=moveit_commander.RobotCommander() #interface to robot
         self.scene=moveit_commander.PlanningSceneInterface() #interface to world around the robot
-        self.group_rightarm=moveit_commander.MoveGroupCommander('right_arm') #interface to joints of the right arm             
-        #self.group_leftarm=moveit_commander.MoveGroupCommander('left_arm') #interface to joints of the left arm        
+        #self.group_rightarm=moveit_commander.MoveGroupCommander('right_arm') #interface to joints of the right arm             
+        self.group_leftarm=moveit_commander.MoveGroupCommander('left_arm') #interface to joints of the left arm        
         #self.group_leftgripper=moveit_commander.MoveGroupCommander('left_gripper')        
         #self.group_rightgripper=moveit_commander.MoveGroupCommander('right_gripper')      
-        #self.group_leftarm.set_planner_id("RRTConnectkConfigDefault")
-        self.group_rightarm.set_planner_id("RRTConnectkConfigDefault")
+        self.group_leftarm.set_planner_id("RRTConnectkConfigDefault")
+        #self.group_rightarm.set_planner_id("RRTConnectkConfigDefault")
        
         #Start action clients for grippers
         self.r_close_gripper_client=actionlib.SimpleActionClient('r_gripper_controller/gripper_action', Pr2GripperCommandAction)
@@ -73,10 +73,10 @@ class toolPickingServer(): #object):
 
         self.tool_listener=tf.TransformListener()
         markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
-        for marker in markers:        
+        #for marker in markers:        
             #Remove markers from last run
-            self.scene. remove_attached_object('base_footprint', marker)
-        self.add_tools_to_scene(markers)
+        #    self.scene. remove_attached_object('base_footprint', marker)
+        #self.add_tools_to_scene(markers)
 
         #Set up action server
         self._as=actionlib.SimpleActionServer('grab_tool', GrabToolAction, execute_cb=self.execute_cb, auto_start=False)
@@ -96,7 +96,8 @@ class toolPickingServer(): #object):
     def execute_cb(self, goal):
         goal_topic=goal.tag_topic
         print(goal_topic)
-        arm='r'
+        arm=goal.arm
+        print(arm)
         #TODO: figure out how to pass in arm into action server (list of strings?)
         success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
         rospy.loginfo("Opening gripper")        
@@ -123,7 +124,7 @@ class toolPickingServer(): #object):
             #TODO: insert recovery behaviers?
             rospy.logerr("Tool picking approach failed: aborting")
             self._as.set_aborted()
-        #self._as.set_aborted()
+        self._as.set_aborted()
     def add_tools_to_scene(self, markers):
         #Add tools to the planning scene
         for marker_name in markers:
@@ -375,6 +376,7 @@ class toolPickingServer(): #object):
                 else:
                     return False
 def main():
+#if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('grab_tool_server', anonymous=True)
     toolPickingServer()
