@@ -73,16 +73,16 @@ class toolPickingServer(): #object):
 
         self.tool_listener=tf.TransformListener()
         markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
-        #for marker in markers:        
+        for marker in markers:        
             #Remove markers from last run
-        #    self.scene. remove_attached_object('base_footprint', marker)
-        #self.add_tools_to_scene(markers)
+            self.scene. remove_attached_object('base_footprint', marker)
+        self.add_tools_to_scene(markers)
 
         #Set up action server
         self._as=actionlib.SimpleActionServer('grab_tool', GrabToolAction, execute_cb=self.execute_cb, auto_start=False)
         self._as.start()
-    #def lgripperPoseCallback(self, msg):
-    #    self.lgripperPose=msg
+    def lgripperPoseCallback(self, msg):
+        self.lgripperPose=msg
 
     def ljointStateCallback(self, msg):
         self.ljointState=msg.actual.positions
@@ -97,34 +97,45 @@ class toolPickingServer(): #object):
         goal_topic=goal.tag_topic
         print(goal_topic)
         arm=goal.arm
-        print(arm)
+        pick=goal.pick
+        print(arm, remove)
         #TODO: figure out how to pass in arm into action server (list of strings?)
-        success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
-        rospy.loginfo("Opening gripper")        
-        plan=self.plan_approach(arm, goal_topic, success)
-        if plan is False:
-            rospy.logerr("Planning Failed. Aborting")
-            self._as.set_aborted()
-        else:
-            rospy.loginfo("Planning successful, executing plan")
-            print plan            
-        #TODO: make sure it aborts of no plan is found cuz then the rest is useless
-        success=self.execute_plan(plan, arm)
-        plan=self.approach_tool(arm, goal_topic, success)       
-        succeeded=self.execute_plan(plan, arm)        
-        if succeeded:           
-            success=self.move_gripper(False, arm)
-            if success:
-                rospy.loginfo("Tool Successfully Grasped!")
-                self._as.set_success()
+        if pick:
+            rospy.loginfo("Retrieving tool")
+            success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
+            rospy.loginfo("Opening gripper")        
+            plan=self.plan_approach(arm, goal_topic, success)
+            rospy.loginfo("Planning path to tool")
+            if plan is False:
+                rospy.logerr("Planning Failed. Aborting")
+                self._as.set_aborted()
             else:
-                rospy.logerr("Tool picking failed. Tool not grasped. Aborting")
-                self._as.set_aborted()        
-        else:
-            #TODO: insert recovery behaviers?
-            rospy.logerr("Tool picking approach failed: aborting")
-            self._as.set_aborted()
-        self._as.set_aborted()
+                rospy.loginfo("Planning successful, executing plan")
+                print plan            
+                #TODO: make sure it aborts of no plan is found cuz then the rest is useless
+                success=self.execute_plan(plan, arm)
+                plan=self.approach_tool(arm, goal_topic, success)
+                if plan is False:
+                    rospy.logerr("Approaching tool failed. Aborting")      
+                    self._as.set_aborted()                
+                else:
+                    rospy.loginfo("Approaching tool")                
+                    succeeded=self.execute_plan(plan, arm)        
+                    if succeeded:           
+                        success=self.move_gripper(False, arm)
+                        if success:
+                            rospy.loginfo("Tool Successfully Grasped!")
+                            self._as.set_success()
+                        else:
+                            rospy.logerr("Tool picking failed. Tool not grasped. Aborting")
+                            self._as.set_aborted()        
+                    else:
+                        #TODO: insert recovery behaviers?
+                        rospy.logerr("Tool picking approach failed: aborting")
+                        self._as.set_aborted()
+        elif not pick:
+            rospy.loginfo("Returning tool")
+            
     def add_tools_to_scene(self, markers):
         #Add tools to the planning scene
         for marker_name in markers:
@@ -287,7 +298,7 @@ class toolPickingServer(): #object):
             waypoints.pose.orientation.w=0 
             print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=0.0    
+            jump_threshold=10000    
             avoid_collisions=False   
             plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints.pose], eef_step, jump_threshold, avoid_collisions )
             if len(plan.joint_trajectory.points)<1 or fraction<0.5:
@@ -306,7 +317,7 @@ class toolPickingServer(): #object):
             waypoints.pose.orientation.w=0 
             print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=0.0    
+            jump_threshold=10000   
             avoid_collisions=False   
             plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints.pose], eef_step, jump_threshold, avoid_collisions )
             if len(plan.joint_trajectory.points)<1 or fraction<0.5:
