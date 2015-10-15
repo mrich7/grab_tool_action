@@ -41,18 +41,18 @@ class toolPickingServer(): #object):
         self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
       
         #Services and publishers for Haptic MPC
-        #self.enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
-        self.r_enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
-        #self.l_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
-        self.r_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
-        #self.l_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
-        self.r_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
-        #self.l_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
-        self.r_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
+        self.l_enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
+        #self.r_enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
+        self.l_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
+        #self.r_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
+        self.l_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
+        #self.r_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
+        self.l_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
+        #self.r_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
 
         #Subscribers for MPC
-        #rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
-        rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
+        rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
+        #rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
         rospy.Subscriber('/l_arm_controller/state', JointTrajectoryControllerState, self.ljointStateCallback)
         rospy.Subscriber('/r_arm_controller/state', JointTrajectoryControllerState, self.rjointStateCallback)
 
@@ -70,6 +70,10 @@ class toolPickingServer(): #object):
         self.posture_weights.orient_weight = 0
         self.posture_weights.posture_weight = 1
        
+        #Define offsets for pick and place
+        self.offset_pick=(0.4, 0.04, 0.025)
+        self.offset_place_right=(0.4, -0.06, 0.025)
+        self.offset_place_left=(0.4, 0.14, 0.025)
 
         self.tool_listener=tf.TransformListener()
         markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
@@ -98,6 +102,11 @@ class toolPickingServer(): #object):
         print(goal_topic)
         arm=goal.arm
         pick=goal.pick
+        if pick:
+            rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool" goal_topic, arm) 
+            success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
+            rospy.loginfo("Opening gripper")        
+            plan=self.plan_approach(arm, goal_topic, success, self.offset_pick)
         print(arm, remove)
         #TODO: figure out how to pass in arm into action server (list of strings?)
         if pick:
@@ -111,7 +120,7 @@ class toolPickingServer(): #object):
                 self._as.set_aborted()
             else:
                 rospy.loginfo("Planning successful, executing plan")
-                print plan            
+                print plan          
                 #TODO: make sure it aborts of no plan is found cuz then the rest is useless
                 success=self.execute_plan(plan, arm)
                 plan=self.approach_tool(arm, goal_topic, success)
@@ -134,14 +143,55 @@ class toolPickingServer(): #object):
                         rospy.logerr("Tool picking approach failed: aborting")
                         self._as.set_aborted()
         elif not pick:
-            rospy.loginfo("Returning tool")
+            rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Returning tool" goal_topic, arm)
+            if goal_topic is 'ar_marker_1':
+            plan=self.plan_approach(arm,'ar_marker_2', True, self.offset_place_left) #assumes that tool is already in hand and tools are in the tool box in the right order (1, 2, 3,4 from left to right)
             
+            elif goal_topic is 'ar_marker_2':
+            plan=self.plan_approach(arm, 'ar_marker_1', True, self.offset_place_right)
+
+            elif goal_topic is 'ar_marker_3':
+            plan=self.plan_approach(arm, 'ar_marker_2', True, self.offset_place_right)
+            
+            elif goal_topic is 'ar_marker_4': 
+            plan=self.plan_approach(arm, 'ar_marker_3', True, self.offset_place_right)
+
+            else:
+                rospy.logerr("Chosen marker not in list of tool markers. Tool placement failed")
+                self._as.set_aborted()
+            
+            if plan is False:
+                rospy.logerr("Planning Failed. Aborting")
+                self._as.set_aborted()
+            else:
+                rospy.loginfo("Planning successful, executing plan")           
+                success=self.execute_plan(plan, arm)
+                plan=self.approach_tool(arm, goal_topic, success)
+                if plan is False:
+                    rospy.logerr("Approaching tool failed. Aborting")      
+                    self._as.set_aborted()                
+                else:
+                    rospy.loginfo("Approaching tool")                
+                    succeeded=self.execute_plan(plan, arm)        
+                    if succeeded:           
+                        success=self.move_gripper(True, arm)
+                        if success:
+                            rospy.loginfo("Tool Successfully Replaced")
+                            self._as.set_success()
+                        else:
+                            rospy.logerr("Tool replacement failed. Tool not replaced. Aborting")
+                            self._as.set_aborted()        
+                    else:
+                        #TODO: insert recovery behaviers?
+                        rospy.logerr("Tool replacement approach failed: aborting")
+                        self._as.set_aborted()        
+            rospy.loginfo("Returning tool")
     def add_tools_to_scene(self, markers):
-        #Add tools to the planning scene
+        #Add tools to the MoveIt planning scene
         for marker_name in markers:
             try:
                 now=rospy.Time(0)
-                self.tool_listener.waitForTransform('base_footprint', marker_name, now, rospy.Duration(10)) #look up transform between given tool and the torso (torso won't move)
+                self.tool_listener.waitForTransform('base_footprint', marker_name, now, rospy.Duration(10)) #look up transform between given tool and the base(assumes that base won't move with respect to tools during pick/place task)
                 trans, rot=self.tool_listener.lookupTransform('base_footprint', marker_name, now)
                 mesh_pose=PoseStamped()
                 mesh_pose.header.stamp=rospy.Time.now()
@@ -159,9 +209,9 @@ class toolPickingServer(): #object):
             except(tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):               
                 print "TF Exception!"
 
-    def plan_approach(self, arm, goal_topic, succeed_gripper):
+    def plan_approach(self, arm, goal_topic, succeed_gripper, offset):
         g=PoseStamped()
-
+        ox, oy, oz=offset
         if arm is 'r'and succeed_gripper:
             self.group_rightarm.set_start_state_to_current_state()
             self.group_rightarm.clear_pose_targets()
@@ -186,9 +236,9 @@ class toolPickingServer(): #object):
                 q3=tft.quaternion_multiply(q1_con, q1)
                 q4=tft.quaternion_multiply(rot_y_axis, q3)
                 q_fin=tft.quaternion_multiply(q1, q4)
-                g.pose.position.x =trans[0]-0.4 #325
-                g.pose.position.y =trans[1]-0.04
-                g.pose.position.z=trans[2]+0.025
+                g.pose.position.x =trans[0]+ox #325
+                g.pose.position.y =trans[1]+oy
+                g.pose.position.z=trans[2]+oz
                 g.pose.orientation.x =0 #q_fin[0] #should be close to [0, 0, 0, 1] when base is pointed at tools
                 g.pose.orientation.y =0 #q_fin[1]
                 g.pose.orientation.z =0 #q_fin[2]
@@ -292,35 +342,35 @@ class toolPickingServer(): #object):
             waypoints.pose.position.x=0.1
             waypoints.pose.position.y=0.0
             waypoints.pose.position.z=0.0
-            waypoints.pose.orientation.x=0  
-            waypoints.pose.orientation.y=0
-            waypoints.pose.orientation.z=0
-            waypoints.pose.orientation.w=0 
+            waypoints.pose.orientation.x=0.0  
+            waypoints.pose.orientation.y=0.0
+            waypoints.pose.orientation.z=0.0
+            waypoints.pose.orientation.w=1.0 
             print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
             jump_threshold=10000    
             avoid_collisions=False   
             plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints.pose], eef_step, jump_threshold, avoid_collisions )
-            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+            print fraction            
+            if len(plan.joint_trajectory.points)<1: #or fraction<0.5:
                 return False
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
-            waypoints=self.lgripperPose
-            self.group_leftarm.set_pose_reference_frame(waypoints.header.frame_id)
-            waypoints.pose.position.x=0.1
-            waypoints.pose.position.y=0.0
-            waypoints.pose.position.z=0.0
-            waypoints.pose.orientation.x=0  
-            waypoints.pose.orientation.y=0
-            waypoints.pose.orientation.z=0
-            waypoints.pose.orientation.w=0 
-            print waypoints.pose
+            waypoints1=self.lgripperPose
+            waypoints2=self.lgripperPose
+            waypoints3=self.lgripperPose
+            self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)
+            waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
+            waypoints2.pose.position.x=waypoints2.pose.position.x+0.8
+            waypoints3.pose.position.x=waypoints3.pose.position.x+0.1 
+            #print waypoints.pose
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000   
+            jump_threshold=10000
             avoid_collisions=False   
-            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints.pose], eef_step, jump_threshold, avoid_collisions )
-            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            print fraction            
+            if len(plan.joint_trajectory.points)<1:#or fraction<0.5:
                 return False
             else:
                 return plan
@@ -386,12 +436,10 @@ class toolPickingServer(): #object):
                     return False 
                 else:
                     return False
-def main():
-#if __name__=="__main__":
+#def main():
+if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('grab_tool_server', anonymous=True)
     toolPickingServer()
     while not rospy.is_shutdown():
         rospy.spin()
-
-

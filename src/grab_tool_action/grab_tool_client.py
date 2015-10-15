@@ -24,6 +24,7 @@ class GrabToolClient (object):
         goal=GrabToolGoal()
         goal.tag_topic='ar_marker_4'
         goal.arm='l'
+        goal.pick=True
         self.client.send_goal(goal)
         self.client.wait_for_result()
         result=self.client.get_result()
