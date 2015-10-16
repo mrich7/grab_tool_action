@@ -1,6 +1,7 @@
 #goal definition
 string tag_topic
 string arm
+bool pick
 ---
 #result definition
 bool success
