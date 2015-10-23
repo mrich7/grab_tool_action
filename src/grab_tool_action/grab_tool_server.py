@@ -19,40 +19,38 @@ import numpy as np
 from math import cos, sin, pi
 
 class toolPickingServer(): #object):
-    _feedback=GrabToolActionFeedback()
-    _result=GrabToolActionResult()
+    _feedback=GrabToolFeedback()
+    _result=GrabToolResult()
 
-    def __init__(self, arm='l'):
+    def __init__(self):
         self.rate=20
         self.timeout=rospy.Duration(120)
         #Arm should be 'r' for right arm or 'l' for left arm
         #Turn on MoveIt and groups for arms and grippers
         robot=moveit_commander.RobotCommander() #interface to robot
         self.scene=moveit_commander.PlanningSceneInterface() #interface to world around the robot
-        #self.group_rightarm=moveit_commander.MoveGroupCommander('right_arm') #interface to joints of the right arm             
-        self.group_leftarm=moveit_commander.MoveGroupCommander('left_arm') #interface to joints of the left arm        
-        #self.group_leftgripper=moveit_commander.MoveGroupCommander('left_gripper')        
-        #self.group_rightgripper=moveit_commander.MoveGroupCommander('right_gripper')      
+        self.group_rightarm=moveit_commander.MoveGroupCommander('right_arm') #interface to joints of the right arm             
+        self.group_leftarm=moveit_commander.MoveGroupCommander('left_arm') #interface to joints of the left arm          
         self.group_leftarm.set_planner_id("RRTConnectkConfigDefault")
-        #self.group_rightarm.set_planner_id("RRTConnectkConfigDefault")
+        self.group_rightarm.set_planner_id("RRTConnectkConfigDefault")
        
         #Start action clients for grippers
         self.r_close_gripper_client=actionlib.SimpleActionClient('r_gripper_controller/gripper_action', Pr2GripperCommandAction)
         self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
       
         #Services and publishers for Haptic MPC
-        self.l_enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
-        #self.r_enable_haptic=rospy.ServiceProxy('/haptic_mpc/enable_mpc', EnableHapticMPC)
-        self.l_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
-        #self.r_goal_pub=rospy.Publisher('/haptic_mpc/goal_pose', PoseStamped)
-        self.l_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
-        #self.r_goal_posture_pub = rospy.Publisher("/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
-        self.l_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
-        #self.r_haptic_weights = rospy.Publisher("/haptic_mpc/weights", HapticMpcWeights)
+        self.l_enable_haptic=rospy.ServiceProxy('left/haptic_mpc/enable_mpc', EnableHapticMPC)
+        self.r_enable_haptic=rospy.ServiceProxy('right/haptic_mpc/enable_mpc', EnableHapticMPC)
+        self.l_goal_pub=rospy.Publisher('left/haptic_mpc/goal_pose', PoseStamped)
+        self.r_goal_pub=rospy.Publisher('right/haptic_mpc/goal_pose', PoseStamped)
+        self.l_goal_posture_pub = rospy.Publisher("left/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
+        self.r_goal_posture_pub = rospy.Publisher("right/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
+        self.l_haptic_weights = rospy.Publisher("left/haptic_mpc/weights", HapticMpcWeights)
+        self.r_haptic_weights = rospy.Publisher("right/haptic_mpc/weights", HapticMpcWeights)
 
         #Subscribers for MPC
-        rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
-        #rospy.Subscriber('/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
+        rospy.Subscriber('left/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
+        rospy.Subscriber('right/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
         rospy.Subscriber('/l_arm_controller/state', JointTrajectoryControllerState, self.ljointStateCallback)
         rospy.Subscriber('/r_arm_controller/state', JointTrajectoryControllerState, self.rjointStateCallback)
 
@@ -62,7 +60,7 @@ class toolPickingServer(): #object):
         self.orientation_weights.position_weight = 1
         self.orientation_weights.orient_weight = 1
         self.orientation_weights.posture_weight = 0
-        #self.execute_callback(goal)
+     
 
         #Posture weight for posture poses
         self.posture_weights = HapticMpcWeights()
@@ -85,6 +83,7 @@ class toolPickingServer(): #object):
         #Set up action server
         self._as=actionlib.SimpleActionServer('grab_tool', GrabToolAction, execute_cb=self.execute_cb, auto_start=False)
         self._as.start()
+
     def lgripperPoseCallback(self, msg):
         self.lgripperPose=msg
 
@@ -102,47 +101,63 @@ class toolPickingServer(): #object):
         print(goal_topic)
         arm=goal.arm
         pick=goal.pick
+        #Test out offset thing        
         if pick:
             rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool" goal_topic, arm) 
+            self._feedback.goal_status="Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool" goal_topic, arm            
+            self._as.publish_feedback(self._feedback)            
             success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
+            self._feedback.goal_status="Opening gripper"            
+            self._as.publish_feedback(self._feedback)    
             rospy.loginfo("Opening gripper")        
-            plan=self.plan_approach(arm, goal_topic, success, self.offset_pick)
-        print(arm, remove)
-        #TODO: figure out how to pass in arm into action server (list of strings?)
-        if pick:
-            rospy.loginfo("Retrieving tool")
-            success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
-            rospy.loginfo("Opening gripper")        
-            plan=self.plan_approach(arm, goal_topic, success)
+            plan=self.plan_approach(arm, goal_topic, success, self.offset_pick)       
+            self._feedback.goal_status="Planning path to tool"            
+            self._as.publish_feedback(self._feedback)             
             rospy.loginfo("Planning path to tool")
             if plan is False:
+                self._feedback.goal_status="Planning Failed. Aborting"           
+                self._as.publish_feedback(self._feedback)
                 rospy.logerr("Planning Failed. Aborting")
                 self._as.set_aborted()
             else:
+                self._feedback.goal_status="Planning successful, executing plan"           
+                self._as.publish_feedback(self._feedback)
                 rospy.loginfo("Planning successful, executing plan")
                 print plan          
                 #TODO: make sure it aborts of no plan is found cuz then the rest is useless
                 success=self.execute_plan(plan, arm)
                 plan=self.approach_tool(arm, goal_topic, success)
                 if plan is False:
+                    self._feedback.goal_status="Approaching tool failed. Aborting"           
+                    self._as.publish_feedback(self._feedback)
                     rospy.logerr("Approaching tool failed. Aborting")      
                     self._as.set_aborted()                
                 else:
+                    self._feedback.goal_status="Approaching tool"           
+                    self._as.publish_feedback(self._feedback)
                     rospy.loginfo("Approaching tool")                
                     succeeded=self.execute_plan(plan, arm)        
                     if succeeded:           
                         success=self.move_gripper(False, arm)
                         if success:
+                            self._feedback.goal_status="Tool Successfully Grasped!"           
+                            self._as.publish_feedback(self._feedback)
                             rospy.loginfo("Tool Successfully Grasped!")
                             self._as.set_success()
                         else:
+                            self._feedback.goal_status="Tool picking failed. Tool not grasped. Aborting"           
+                            self._as.publish_feedback(self._feedback)
                             rospy.logerr("Tool picking failed. Tool not grasped. Aborting")
                             self._as.set_aborted()        
                     else:
                         #TODO: insert recovery behaviers?
+                        self._feedback.goal_status="Tool picking approach failed: aborting"           
+                        self._as.publish_feedback(self._feedback)
                         rospy.logerr("Tool picking approach failed: aborting")
                         self._as.set_aborted()
         elif not pick:
+            self._feedback.goal_status="Starting action server with Goal Topic: %s, Arm: %s, and Pick: Returning tool" goal_topic, arm           
+            self._as.publish_feedback(self._feedback)
             rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Returning tool" goal_topic, arm)
             if goal_topic is 'ar_marker_1':
             plan=self.plan_approach(arm,'ar_marker_2', True, self.offset_place_left) #assumes that tool is already in hand and tools are in the tool box in the right order (1, 2, 3,4 from left to right)
@@ -157,35 +172,51 @@ class toolPickingServer(): #object):
             plan=self.plan_approach(arm, 'ar_marker_3', True, self.offset_place_right)
 
             else:
+                self._feedback.goal_status="Chosen marker not in list of tool markers. Tool placement failed"         
+                self._as.publish_feedback(self._feedback)
                 rospy.logerr("Chosen marker not in list of tool markers. Tool placement failed")
                 self._as.set_aborted()
             
             if plan is False:
+                self._feedback.goal_status="Planning Failed. Aborting"         
+                self._as.publish_feedback(self._feedback)
                 rospy.logerr("Planning Failed. Aborting")
                 self._as.set_aborted()
             else:
+                self._feedback.goal_status="Planning successful, executing plan"           
+                self._as.publish_feedback(self._feedback)
                 rospy.loginfo("Planning successful, executing plan")           
                 success=self.execute_plan(plan, arm)
                 plan=self.approach_tool(arm, goal_topic, success)
                 if plan is False:
+                    self._feedback.goal_status="Approaching tool failed. Aborting"           
+                    self._as.publish_feedback(self._feedback)
                     rospy.logerr("Approaching tool failed. Aborting")      
                     self._as.set_aborted()                
                 else:
+                    self._feedback.goal_status="Approaching tool"           
+                    self._as.publish_feedback(self._feedback)
                     rospy.loginfo("Approaching tool")                
                     succeeded=self.execute_plan(plan, arm)        
                     if succeeded:           
                         success=self.move_gripper(True, arm)
                         if success:
+                            self._feedback.goal_status="Tool Successfully Replaced"          
+                            self._as.publish_feedback(self._feedback)
                             rospy.loginfo("Tool Successfully Replaced")
                             self._as.set_success()
                         else:
+                            self._feedback.goal_status="Tool replacement failed. Tool not replaced. Aborting"          
+                            self._as.publish_feedback(self._feedback)
                             rospy.logerr("Tool replacement failed. Tool not replaced. Aborting")
                             self._as.set_aborted()        
                     else:
                         #TODO: insert recovery behaviers?
+                        self._feedback.goal_status="Tool replacement approach failed: aborting"         
+                        self._as.publish_feedback(self._feedback)
                         rospy.logerr("Tool replacement approach failed: aborting")
                         self._as.set_aborted()        
-            rospy.loginfo("Returning tool")
+            
     def add_tools_to_scene(self, markers):
         #Add tools to the MoveIt planning scene
         for marker_name in markers:
@@ -199,7 +230,7 @@ class toolPickingServer(): #object):
                 mesh_pose.pose.position.x=trans[0]-0.03
                 mesh_pose.pose.position.y=trans[1]-0.02
                 mesh_pose.pose.position.z=trans[2]+0.05
-                mesh_pose.pose.orientation.x=0 #rot[0]
+                mesh_pose.pose.orientation.x=0 #rot[0] #assumes tools are approximately facing forward with respect to the robot's torso
                 mesh_pose.pose.orientation.y=0 #rot[1]
                 mesh_pose.pose.orientation.z=0 #rot[2]
                 mesh_pose.pose.orientation.w=1 #rot[3]           
@@ -303,7 +334,7 @@ class toolPickingServer(): #object):
                         self.r_goal_posture_pub.publish(goal)
                         postureErr=np.linalg.norm(np.subtract(goal.data,self.rjointState))
                         if rospy.Time.now()>last_time:
-                           self._feedback.feedback='Timeout exceeded'
+                           self._feedback.goal_status='Timeout exceeded'
                            self._as.publish_feedback(self._feedback)
                            return False
                         elif rospy.Time.now()<last_time:
@@ -322,7 +353,7 @@ class toolPickingServer(): #object):
                         self.l_goal_posture_pub.publish(goal)
                         postureErr=np.linalg.norm(np.subtract(goal.data,self.ljointState))
                         if rospy.Time.now()>last_time:
-                           self._feedback.feedback='Timeout exceeded'
+                           self._feedback.goal_status='Timeout exceeded'
                            self._as.publish_feedback(self._feedback)
                            return False
                         elif rospy.Time.now()<last_time:
@@ -395,12 +426,12 @@ class toolPickingServer(): #object):
                 result = self.l_close_gripper_client.get_result()
                 state=self.l_close_gripper_client.get_state()           
             if state == GoalStatus.SUCCEEDED:
-                #self._feedback.feedback='Open gripper succeeded' 
+                #self._feedback.goal_status='Open gripper succeeded' 
                 #self._as.publish_feedback(self._feedback)               
                 return True
             else:
                 if result.stalled:
-                    #self._feedback.feedback='Obstacle preventing gripper from opening'
+                    #self._feedback.goal_status='Obstacle preventing gripper from opening'
                     #self._as.publish_feedback(self._feedback)          
                     return False
                 else:
@@ -422,16 +453,16 @@ class toolPickingServer(): #object):
                 result = self.l_close_gripper_client.get_result()
                 state=self.l_close_gripper_client.get_state() 
             if state == GoalStatus.SUCCEEDED:
-                #self._feedback.feedback="Did not succeed closing gripper around object try again" #make this a message sent to user                
+                #self._feedback.goal_status="Did not succeed closing gripper around object try again" #make this a message sent to user                
                 #self._as.publish_feedback(self._feedback)
                 return False
             else:
                 if result.stalled:
-                    #self._feedback.feedback="Gripper successfully closed aroud an object"   #make this a message sent to user                     
+                    #self._feedback.goal_status="Gripper successfully closed aroud an object"   #make this a message sent to user                     
                     #self._as.publish_feedback(self._feedback)                    
                     return True #this is the one we want--->means that the gripper closed around something
                 elif result.reached_goal: 
-                    #self._feedback.feedback="Did not grasp tool correctly, try again"  #make this a message sent to user   
+                    #self._feedback.goal_status="Did not grasp tool correctly, try again"  #make this a message sent to user   
                     #self._as.publish_feedback(self._feedback)                    
                     return False 
                 else:
