@@ -39,18 +39,18 @@ class toolPickingServer(): #object):
         #self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
       
         #Services and publishers for Haptic MPC
-        #self.l_enable_haptic=rospy.ServiceProxy('left/haptic_mpc/enable_mpc', EnableHapticMPC)
-        self.r_enable_haptic=rospy.ServiceProxy('right/haptic_mpc/enable_mpc', EnableHapticMPC)
-        #self.l_goal_pub=rospy.Publisher('left/haptic_mpc/goal_pose', PoseStamped)
-        self.r_goal_pub=rospy.Publisher('right/haptic_mpc/goal_pose', PoseStamped)
-        #self.l_goal_posture_pub = rospy.Publisher("left/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
-        self.r_goal_posture_pub = rospy.Publisher("right/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
-        #self.l_haptic_weights = rospy.Publisher("left/haptic_mpc/weights", HapticMpcWeights)
-        self.r_haptic_weights = rospy.Publisher("right/haptic_mpc/weights", HapticMpcWeights)
+        #self.l_enable_haptic=rospy.ServiceProxy('left_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
+        self.r_enable_haptic=rospy.ServiceProxy('right_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
+        #self.l_goal_pub=rospy.Publisher('left_arm/haptic_mpc/goal_pose', PoseStamped)
+        self.r_goal_pub=rospy.Publisher('right_arm/haptic_mpc/goal_pose', PoseStamped)
+        #self.l_goal_posture_pub = rospy.Publisher("left_arm/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
+        self.r_goal_posture_pub = rospy.Publisher("right_arm/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
+        #self.l_haptic_weights = rospy.Publisher("left_arm/haptic_mpc/weights", HapticMpcWeights)
+        self.r_haptic_weights = rospy.Publisher("right_arm/haptic_mpc/weights", HapticMpcWeights)
 
         #Subscribers for MPC
-        #rospy.Subscriber('left/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
-        rospy.Subscriber('right/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
+        #rospy.Subscriber('left_arm/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
+        rospy.Subscriber('right_arm/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
         #rospy.Subscriber('/l_arm_controller/state', JointTrajectoryControllerState, self.ljointStateCallback)
         rospy.Subscriber('/r_arm_controller/state', JointTrajectoryControllerState, self.rjointStateCallback)
 
@@ -74,11 +74,12 @@ class toolPickingServer(): #object):
         self.offset_place_left=(-0.4, 0.14, 0.025)
 
         self.tool_listener=tf.TransformListener()
-        markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
-        for marker in markers:        
+        self.toolbox={'ar_marker_1': 'scratcher', 'ar_marker_2': 'wiper', 'ar_marker_3': 'shaver', 'ar_marker_4': 'toothbrush'}        
+        #markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
+        #for marker in markers:        
             #Remove markers from last run
-            self.scene. remove_attached_object('base_footprint', marker)
-        self.add_tools_to_scene(markers)
+        #    self.scene. remove_attached_object('base_footprint', marker)
+        #self.add_tools_to_scene(markers)
 
         #Set up action server
         self._as=actionlib.SimpleActionServer('grab_tool', GrabToolAction, execute_cb=self.execute_cb, auto_start=False)
@@ -98,10 +99,15 @@ class toolPickingServer(): #object):
  
     def execute_cb(self, goal):
         goal_topic=goal.tag_topic
-        print(goal_topic)
         arm=goal.arm
         pick=goal.pick
-        #Test out offset thing        
+
+        markers=['ar_marker_1', 'ar_marker_2', 'ar_marker_3', 'ar_marker_4']
+        for marker in markers:        
+            #Remove markers from last run
+            self.scene. remove_attached_object('base_footprint', marker)
+        self.add_tools_to_scene(markers)
+        
         if pick:
             rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool", goal_topic, arm) 
             self._feedback.goal_status="Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool" %(goal_topic, arm)
@@ -123,10 +129,9 @@ class toolPickingServer(): #object):
             else:
                 self._feedback.goal_status="Planning successful, executing plan"           
                 self._as.publish_feedback(self._feedback)
-                rospy.loginfo("Planning successful, executing plan")
-                print plan          
-                #TODO: make sure it aborts of no plan is found cuz then the rest is useless
+                rospy.loginfo("Planning successful, executing plan")               
                 success=self.execute_plan(plan, arm)
+
                 if success:
                     rospy.loginfo("Executing plan successful. Approaching tool.")
                     self._feedback.goal_status="Executing plan successful. Approaching tool."          
@@ -258,6 +263,10 @@ class toolPickingServer(): #object):
                 rospy.loginfo("Added %s to scene" % marker_name) #TODO: turn these into roslog info things
                
             except(tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):               
+                self._feedback.goal_status="Locating %s failed. Please move robot's head so that the tool tags are in full view of the camera. Then press the 'Start' button to try again." % self.toolbox[marker_name]         
+                self._as.publish_feedback(self._feedback)
+                rospy.logerr("Locating %s failed. Please move robot's head so that the tool tags are in full view of the camera. Then press the 'Start' button to try again.", self.toolbox[marker_name])
+                self._as.set_aborted()     
                 print "TF Exception!"
 
     def plan_approach(self, arm, goal_topic, succeed_gripper, offset):
@@ -397,7 +406,7 @@ class toolPickingServer(): #object):
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000
+            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? who's right?
             avoid_collisions=False   
             plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
             print fraction            
@@ -414,7 +423,7 @@ class toolPickingServer(): #object):
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000
+            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? who's right?
             avoid_collisions=False   
             plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
             print fraction            
