@@ -14,6 +14,7 @@ from hrl_haptic_manipulation_in_clutter_srvs.srv import *
 from hrl_haptic_manipulation_in_clutter_msgs.msg import *
 from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import String, Bool
+from trajectory_msgs.msg import JointTrajectory
 import hrl_msgs.msg
 import numpy as np
 from math import cos, sin, pi
@@ -43,8 +44,8 @@ class toolPickingServer(): #object):
         self.r_enable_haptic=rospy.ServiceProxy('right_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
         #self.l_goal_pub=rospy.Publisher('left_arm/haptic_mpc/goal_pose', PoseStamped)
         self.r_goal_pub=rospy.Publisher('right_arm/haptic_mpc/goal_pose', PoseStamped)
-        #self.l_goal_posture_pub = rospy.Publisher("left_arm/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray)
-        self.r_goal_posture_pub = rospy.Publisher("right_arm/haptic_mpc/goal_posture", hrl_msgs.msg.FloatArray) 
+        #self.l_goal_posture_pub = rospy.Publisher("left_arm/haptic_mpc/joint_trajectory", JointTrajectory)
+        self.r_goal_posture_pub = rospy.Publisher("right_arm/haptic_mpc/joint_trajectory", JointTrajectory) 
         #self.l_haptic_weights = rospy.Publisher("left_arm/haptic_mpc/weights", HapticMpcWeights)
         self.r_haptic_weights = rospy.Publisher("right_arm/haptic_mpc/weights", HapticMpcWeights)
 
@@ -109,8 +110,8 @@ class toolPickingServer(): #object):
         self.add_tools_to_scene(markers)
         
         if pick:
-            rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool", goal_topic, arm) 
-            self._feedback.goal_status="Starting action server with Goal Topic: %s, Arm: %s, and Pick: Picking tool" %(goal_topic, arm)
+            rospy.loginfo("Starting action server with Tool: %s, Arm: %s, and Pick: Picking tool", self.toolbox[goal_topic], arm) 
+            self._feedback.goal_status="Starting action server with Tool: %s, Arm: %s, and Pick: Picking tool" %(self.toolbox[goal_topic], arm)
           
             self._as.publish_feedback(self._feedback)            
             success=self.move_gripper(True, arm) #open gripper in preparation for moving the arm
@@ -171,9 +172,9 @@ class toolPickingServer(): #object):
                         rospy.logerr("Tool picking approach failed: aborting")
                         self._as.set_aborted()
         elif not pick:
-            self._feedback.goal_status="Starting action server with Goal Topic: %s, Arm: %s, and Pick: Returning tool" %(goal_topic, arm)
+            self._feedback.goal_status="Starting action server with Tool: %s, Arm: %s, and Pick: Returning tool" %(self.toolbox[goal_topic], arm)
             self._as.publish_feedback(self._feedback.goal_status)
-            rospy.loginfo("Starting action server with Goal Topic: %s, Arm: %s, and Pick: Returning tool", goal_topic, arm)
+            rospy.loginfo("Starting action server with Tool: %s, Arm: %s, and Pick: Returning tool", self.toolbox[goal_topic], arm)
             if goal_topic is 'ar_marker_1':
                 plan=self.plan_approach(arm,'ar_marker_2', True, self.offset_place_left) #assumes that tool is already in hand and tools are in the tool box in the right order (1, 2, 3, 4 from left to right)
             
@@ -302,7 +303,8 @@ class toolPickingServer(): #object):
                 g.pose.orientation.x =0 #q_fin[0] #should be close to [0, 0, 0, 1] when base is pointed at tools
                 g.pose.orientation.y =0 #q_fin[1]
                 g.pose.orientation.z =0 #q_fin[2]
-                g.pose.orientation.w =1 #q_fin[3]
+                g.pose.orientation.w =1 #q_fin[3] 
+                #TODO: Because gripper is symmetrical, check if another equivalent pose is closer to the current configuration.
                 print(trans[0])
                 print(trans[1])
                 print(trans[2])
@@ -350,45 +352,52 @@ class toolPickingServer(): #object):
     def execute_plan(self, plan, arm):
         if plan is not False and not self._as.is_preempt_requested():
             last_time=rospy.Time.now()+self.timeout
-            goal=hrl_msgs.msg.FloatArray()            
+            goal=JointTrajectory()            
             if arm is 'r':
                 self.r_haptic_weights.publish(self.posture_weights)
-                for pose in plan.joint_trajectory.points:
-                    goal.header.stamp=rospy.Time.now()
-                    goal.data=pose.positions
-                    self.r_goal_posture_pub.publish(goal)
-                    postureErr=np.linalg.norm(np.subtract(goal.data, self.rjointState))  
-                    print(postureErr)                 
-                    while not postureErr<0.1 and not self._as.is_preempt_requested():
-                        goal.header.stamp=rospy.Time.now()                        
-                        self.r_goal_posture_pub.publish(goal)
-                        postureErr=np.linalg.norm(np.subtract(goal.data,self.rjointState))
-                        if rospy.Time.now()>last_time:
-                           self._feedback.goal_status='Timeout exceeded'
-                           self._as.publish_feedback(self._feedback)
-                           return False
-                        elif rospy.Time.now()<last_time:
-                            continue
-                        self.rate.sleep()
+                goal.header.stamp=rospy.Time.now()
+                goal.joint_names=plan.joint_names
+                goal.points=plan.points
+                self.r_goal_posture_pub.publish(goal)
+                #for pose in plan.joint_trajectory.points:
+                #    goal.header.stamp=rospy.Time.now()
+                #    goal.data=pose.positions
+                #    self.r_goal_posture_pub.publish(goal)
+                #    postureErr=np.linalg.norm(np.subtract(goal.data, self.rjointState))                  
+                #    while not postureErr<0.1 and not self._as.is_preempt_requested():
+                #        goal.header.stamp=rospy.Time.now()                        
+                #        self.r_goal_posture_pub.publish(goal)
+                #        postureErr=np.linalg.norm(np.subtract(goal.data,self.rjointState))
+                #        if rospy.Time.now()>last_time:
+                #           self._feedback.goal_status='Timeout exceeded'
+                #           self._as.publish_feedback(self._feedback)
+                #           return False
+                #        elif rospy.Time.now()<last_time:
+                #            continue
+                #        self.rate.sleep()
                 return True
             elif arm is 'l':
                 self.l_haptic_weights.publish(self.posture_weights)
-                for pose in plan.joint_trajectory.points:
-                    goal.header.stamp=rospy.Time.now()
-                    goal.data=pose.positions
-                    self.l_goal_posture_pub.publish(goal)
-                    postureErr=np.linalg.norm(np.subtract(goal.data, self.ljointState))
-                    while not postureErr<0.1 and not self._as.is_preempt_requested():
-                        goal.header.stamp=rospy.Time.now()                        
-                        self.l_goal_posture_pub.publish(goal)
-                        postureErr=np.linalg.norm(np.subtract(goal.data,self.ljointState))
-                        if rospy.Time.now()>last_time:
-                           self._feedback.goal_status='Timeout exceeded'
-                           self._as.publish_feedback(self._feedback)
-                           return False
-                        elif rospy.Time.now()<last_time:
-                            continue
-                        self.rate.sleep()             
+                goal.header.stamp=rospy.Time.now()
+                goal.joint_names=plan.joint_names
+                goal.points=plan.points
+                self.l_goal_posture_pub.publish(goal)
+                #for pose in plan.joint_trajectory.points:
+                #    goal.header.stamp=rospy.Time.now()
+                #    goal.data=pose.positions
+                #    self.l_goal_posture_pub.publish(goal)
+                #    postureErr=np.linalg.norm(np.subtract(goal.data, self.ljointState))
+                #    while not postureErr<0.1 and not self._as.is_preempt_requested():
+                #        goal.header.stamp=rospy.Time.now()                        
+                #        self.l_goal_posture_pub.publish(goal)
+                #        postureErr=np.linalg.norm(np.subtract(goal.data,self.ljointState))
+                #        if rospy.Time.now()>last_time:
+                #           self._feedback.goal_status='Timeout exceeded'
+                #           self._as.publish_feedback(self._feedback)
+                #           return False
+                #        elif rospy.Time.now()<last_time:
+                #            continue
+                #        self.rate.sleep()             
                 return True
         elif self._as.is_preempt_requested():
             rospy.loginfo('%s: Preempted' % self._action_name)
@@ -398,6 +407,7 @@ class toolPickingServer(): #object):
     
     def approach_tool(self, arm, goal_topic, success):
         if arm is 'r' and success and not self._as.is_preempt_requested():
+            waypoints0=self.rgripperPose             
             waypoints1=self.rgripperPose
             waypoints2=self.rgripperPose
             waypoints3=self.rgripperPose
@@ -406,26 +416,27 @@ class toolPickingServer(): #object):
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? who's right?
+            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? found 2 different sources. who's right?
             avoid_collisions=False   
-            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints.0.pose, waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
             print fraction            
             if len(plan.joint_trajectory.points)<1:#or fraction<0.5:
                 return False
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
+            waypoints0=self.lgripperPose            
             waypoints1=self.lgripperPose
             waypoints2=self.lgripperPose
             waypoints3=self.lgripperPose
-            self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)
+            self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
             jump_threshold=10000 #maybe pick 0.0 insetad of 10000? who's right?
             avoid_collisions=False   
-            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints0.pose, waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
             print fraction            
             if len(plan.joint_trajectory.points)<1:#or fraction<0.5:
                 return False
@@ -452,13 +463,13 @@ class toolPickingServer(): #object):
                 result = self.l_close_gripper_client.get_result()
                 state=self.l_close_gripper_client.get_state()           
             if state == GoalStatus.SUCCEEDED:
-                #self._feedback.goal_status='Open gripper succeeded' 
-                #self._as.publish_feedback(self._feedback)               
+                self._feedback.goal_status="Open gripper succeeded" 
+                self._as.publish_feedback(self._feedback)               
                 return True
             else:
                 if result.stalled:
-                    #self._feedback.goal_status='Obstacle preventing gripper from opening'
-                    #self._as.publish_feedback(self._feedback)          
+                    self._feedback.goal_status="Obstacle preventing gripper from opening"
+                    self._as.publish_feedback(self._feedback)          
                     return False
                 else:
                     return False 
@@ -479,17 +490,17 @@ class toolPickingServer(): #object):
                 result = self.l_close_gripper_client.get_result()
                 state=self.l_close_gripper_client.get_state() 
             if state == GoalStatus.SUCCEEDED:
-                #self._feedback.goal_status="Did not succeed closing gripper around object try again" #make this a message sent to user                
+                #self._feedback.goal_status="Did not succeed closing gripper around object try again"                
                 #self._as.publish_feedback(self._feedback)
                 return False
             else:
                 if result.stalled:
-                    #self._feedback.goal_status="Gripper successfully closed aroud an object"   #make this a message sent to user                     
-                    #self._as.publish_feedback(self._feedback)                    
-                    return True #this is the one we want--->means that the gripper closed around something
+                    self._feedback.goal_status="Gripper successfully closed aroud a tool"                   
+                    self._as.publish_feedback(self._feedback)                    
+                    return True 
                 elif result.reached_goal: 
-                    #self._feedback.goal_status="Did not grasp tool correctly, try again"  #make this a message sent to user   
-                    #self._as.publish_feedback(self._feedback)                    
+                    self._feedback.goal_status="Did not grasp tool correctly. Try again"   
+                    self._as.publish_feedback(self._feedback)                    
                     return False 
                 else:
                     return False
