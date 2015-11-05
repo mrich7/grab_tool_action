@@ -17,7 +17,7 @@ from std_msgs.msg import String, Bool
 from trajectory_msgs.msg import JointTrajectory
 import hrl_msgs.msg
 import numpy as np
-from math import cos, sin, pi
+from math import cos, sin, pi, acos
 
 class toolPickingServer(): #object):
     _feedback=GrabToolFeedback()
@@ -277,11 +277,13 @@ class toolPickingServer(): #object):
             self.group_rightarm.set_start_state_to_current_state()
             self.group_rightarm.clear_pose_targets()
             ee_link=self.group_rightarm.get_end_effector_link()
+            current_pose=self.group_rightarm.get_current_pose() 
             print (ee_link)        
         elif arm is 'l' and succeed_gripper:
             self.group_leftarm.set_start_state_to_current_state()
             self.group_leftarm.clear_pose_targets()
             ee_link=self.group_leftarm.get_end_effector_link()
+            current_pose=self.group_leftarm.get_current_pose() 
             print (ee_link)
     
         if succeed_gripper and not self._as.is_preempt_requested():
@@ -291,20 +293,23 @@ class toolPickingServer(): #object):
                 trans, rot=self.tool_listener.lookupTransform('base_footprint', goal_topic, now)
                 g.header.stamp=rospy.Time.now()
                 g.header.frame_id='base_footprint'
-                q1=np.array([rot[0], rot[1], rot[2], rot[3]])
-                q1_con=tft.quaternion_conjugate(q1) #get the conjugate
-                rot_y_axis=np.array([1.0*sin(-pi/4), 1.0*sin(pi/4), 0.0*sin(pi/4), cos(pi/4)])
-                q3=tft.quaternion_multiply(q1_con, q1)
-                q4=tft.quaternion_multiply(rot_y_axis, q3)
-                q_fin=tft.quaternion_multiply(q1, q4)
+                #q1=np.array([rot[0], rot[1], rot[2], rot[3]])
+                #q1_con=tft.quaternion_conjugate(q1) #get the conjugate
+                #rot_y_axis=np.array([1.0*sin(-pi/4), 1.0*sin(pi/4), 0.0*sin(pi/4), cos(pi/4)])
+                #q3=tft.quaternion_multiply(q1_con, q1)
+                #q4=tft.quaternion_multiply(rot_y_axis, q3)
+                #q_fin=tft.quaternion_multiply(q1, q4)
                 g.pose.position.x =trans[0]+ox 
                 g.pose.position.y =trans[1]+oy
                 g.pose.position.z=trans[2]+oz
-                g.pose.orientation.x =0 #q_fin[0] #should be close to [0, 0, 0, 1] when base is pointed at tools
-                g.pose.orientation.y =0 #q_fin[1]
-                g.pose.orientation.z =0 #q_fin[2]
-                g.pose.orientation.w =1 #q_fin[3] 
+                q_fin=self.check_angle(current_pose)
+                g.pose.orientation.x =q_fin[0] #should be close to [0, 0, 0, 1] or [1, 0, 0, 0] when base is pointed at tools
+                g.pose.orientation.y =q_fin[1]
+                g.pose.orientation.z =q_fin[2]
+                g.pose.orientation.w =q_fin[3] 
                 #TODO: Because gripper is symmetrical, check if another equivalent pose is closer to the current configuration.
+                #check [1, 0, 0, 0] (180 rotated) to see which is closer to current joint position
+                    
                 print(trans[0])
                 print(trans[1])
                 print(trans[2])
@@ -312,6 +317,7 @@ class toolPickingServer(): #object):
                 print(q_fin[1])
                 print(q_fin[2])
                 print(q_fin[3])
+                
    
                 if arm is 'r':
                 #Adjust planning parameters for highest likelihood of finding a plan                
@@ -348,6 +354,17 @@ class toolPickingServer(): #object):
             return False
         else:
             return False
+    
+    def check_angle(self, current):
+        q0=np.array([current.pose.orientation.x,current.pose.orientation.y, current.pose.orientation.z, current.pose.orientation.w])
+        q1=np.array([0, 0, 0, 1])
+        q2=np.array([1, 0, 0, 0])    
+        th1=acos((2*(np.dot(q0,q1))**2)-1) #formula for angle of rotation (in radians) between to quaternions. Handles equivalent quaternions (will return 0 if q0=-q1 for example
+        th2=acos((2*(np.dot(q0,q2))**2)-1)
+        if th1>th2:
+            return q1
+        elif th2>th1:
+            return q2
 
     def execute_plan(self, plan, arm):
         if plan is not False and not self._as.is_preempt_requested():
@@ -356,48 +373,36 @@ class toolPickingServer(): #object):
             if arm is 'r':
                 self.r_haptic_weights.publish(self.posture_weights)
                 goal.header.stamp=rospy.Time.now()
-                goal.joint_names=plan.joint_names
-                goal.points=plan.points
+                goal.joint_names=plan.joint_trajectory.joint_names
+                goal.points=plan.joint_trajectory.points
                 self.r_goal_posture_pub.publish(goal)
-                #for pose in plan.joint_trajectory.points:
-                #    goal.header.stamp=rospy.Time.now()
-                #    goal.data=pose.positions
-                #    self.r_goal_posture_pub.publish(goal)
-                #    postureErr=np.linalg.norm(np.subtract(goal.data, self.rjointState))                  
-                #    while not postureErr<0.1 and not self._as.is_preempt_requested():
-                #        goal.header.stamp=rospy.Time.now()                        
-                #        self.r_goal_posture_pub.publish(goal)
-                #        postureErr=np.linalg.norm(np.subtract(goal.data,self.rjointState))
-                #        if rospy.Time.now()>last_time:
-                #           self._feedback.goal_status='Timeout exceeded'
-                #           self._as.publish_feedback(self._feedback)
-                #           return False
-                #        elif rospy.Time.now()<last_time:
-                #            continue
-                #        self.rate.sleep()
+                postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)], self.rjointState))                  
+                while not postureErr<0.1 and not self._as.is_preempt_requested():
+                    postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)],self.rjointState))
+                    if rospy.Time.now()>last_time:
+                        self._feedback.goal_status='Timeout exceeded'
+                        self._as.publish_feedback(self._feedback)
+                        return False
+                    elif rospy.Time.now()<last_time:
+                        continue
+                    self.rate.sleep()
                 return True
             elif arm is 'l':
                 self.l_haptic_weights.publish(self.posture_weights)
                 goal.header.stamp=rospy.Time.now()
-                goal.joint_names=plan.joint_names
-                goal.points=plan.points
+                goal.joint_names=plan.joint_trajectory.joint_names
+                goal.points=plan.joint_trajectory.points
                 self.l_goal_posture_pub.publish(goal)
-                #for pose in plan.joint_trajectory.points:
-                #    goal.header.stamp=rospy.Time.now()
-                #    goal.data=pose.positions
-                #    self.l_goal_posture_pub.publish(goal)
-                #    postureErr=np.linalg.norm(np.subtract(goal.data, self.ljointState))
-                #    while not postureErr<0.1 and not self._as.is_preempt_requested():
-                #        goal.header.stamp=rospy.Time.now()                        
-                #        self.l_goal_posture_pub.publish(goal)
-                #        postureErr=np.linalg.norm(np.subtract(goal.data,self.ljointState))
-                #        if rospy.Time.now()>last_time:
-                #           self._feedback.goal_status='Timeout exceeded'
-                #           self._as.publish_feedback(self._feedback)
-                #           return False
-                #        elif rospy.Time.now()<last_time:
-                #            continue
-                #        self.rate.sleep()             
+                postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)], self.ljointState))
+                while not postureErr<0.1 and not self._as.is_preempt_requested():
+                    postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)],self.ljointState))
+                    if rospy.Time.now()>last_time:
+                        self._feedback.goal_status='Timeout exceeded'
+                        self._as.publish_feedback(self._feedback)
+                        return False
+                    elif rospy.Time.now()<last_time:
+                        continue
+                    self.rate.sleep()             
                 return True
         elif self._as.is_preempt_requested():
             rospy.loginfo('%s: Preempted' % self._action_name)
@@ -405,40 +410,42 @@ class toolPickingServer(): #object):
         else:
             return False
     
-    def approach_tool(self, arm, goal_topic, success):
+    def approach_tool(self, arm, goal_topic, success):  #TODO: Make sure this is using the real end effector (wrist_roll_link not the gripper)
         if arm is 'r' and success and not self._as.is_preempt_requested():
-            waypoints0=self.rgripperPose             
-            waypoints1=self.rgripperPose
-            waypoints2=self.rgripperPose
-            waypoints3=self.rgripperPose
-            self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
+            waypoints0=self.group_rightarm.get_current_pose()            
+            waypoints1=self.group_rightarm.get_current_pose() 
+            waypoints2=self.group_rightarm.get_current_pose() 
+            waypoints3=self.group_rightarm.get_current_pose() 
+            print(waypoints1.header.frame_id)
+            #self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? found 2 different sources. who's right?
-            avoid_collisions=False   
-            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints.0.pose, waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            jump_threshold=0.0 #choose jump threshold of 0.0
+            avoid_collisions=False 
+            print=waypoints1.pose  
+            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions)
             print fraction            
-            if len(plan.joint_trajectory.points)<1:#or fraction<0.5:
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
                 return False
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
-            waypoints0=self.lgripperPose            
-            waypoints1=self.lgripperPose
-            waypoints2=self.lgripperPose
-            waypoints3=self.lgripperPose
-            self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
+            waypoints0=self.group_leftarm.get_current_pose()            
+            waypoints1=self.group_leftarm.get_current_pose()  
+            waypoints2=self.group_leftarm.get_current_pose()  
+            waypoints3=self.group_leftarm.get_current_pose()  
+            #self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
             eef_step=0.01 #choose a step of 1 cm increments
-            jump_threshold=10000 #maybe pick 0.0 insetad of 10000? who's right?
+            jump_threshold=0.0 
             avoid_collisions=False   
-            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints0.pose, waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
             print fraction            
-            if len(plan.joint_trajectory.points)<1:#or fraction<0.5:
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
                 return False
             else:
                 return plan
