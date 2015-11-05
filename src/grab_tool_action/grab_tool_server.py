@@ -362,9 +362,9 @@ class toolPickingServer(): #object):
         th1=acos((2*(np.dot(q0,q1))**2)-1) #formula for angle of rotation (in radians) between to quaternions. Handles equivalent quaternions (will return 0 if q0=-q1 for example
         th2=acos((2*(np.dot(q0,q2))**2)-1)
         if th1>th2:
-            return q1
-        elif th2>th1:
             return q2
+        elif th2>th1:
+            return q1
 
     def execute_plan(self, plan, arm):
         if plan is not False and not self._as.is_preempt_requested():
