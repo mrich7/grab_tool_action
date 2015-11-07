@@ -14,7 +14,10 @@ from hrl_haptic_manipulation_in_clutter_srvs.srv import *
 from hrl_haptic_manipulation_in_clutter_msgs.msg import *
 from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import String, Bool
-from trajectory_msgs.msg import JointTrajectory
+from moveit_msgs.msg import PositionIKRequest, RobotState, RobotTrajectory 
+from moveit_msgs.srv import GetPositionIK
+from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import hrl_msgs.msg
 import numpy as np
 from math import cos, sin, pi, acos
@@ -24,8 +27,8 @@ class toolPickingServer(): #object):
     _result=GrabToolResult()
 
     def __init__(self):
-        self.rate=20
-        self.timeout=rospy.Duration(120)
+        self.rate=5
+        self.timeout=rospy.Duration(30)
         #Arm should be 'r' for right arm or 'l' for left arm
         #Turn on MoveIt and groups for arms and grippers
         robot=moveit_commander.RobotCommander() #interface to robot
@@ -34,11 +37,14 @@ class toolPickingServer(): #object):
         #self.group_leftarm=moveit_commander.MoveGroupCommander('left_arm') #interface to joints of the left arm          
         #self.group_leftarm.set_planner_id("RRTConnectkConfigDefault")
         self.group_rightarm.set_planner_id("RRTConnectkConfigDefault")
-       
+        
+        #Service for IK through moveit
+        self.arm_ik=rospy.ServiceProxy('compute_ik', GetPositionIK)       
+
         #Start action clients for grippers
         self.r_close_gripper_client=actionlib.SimpleActionClient('r_gripper_controller/gripper_action', Pr2GripperCommandAction)
         #self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
-      
+              
         #Services and publishers for Haptic MPC
         #self.l_enable_haptic=rospy.ServiceProxy('left_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
         self.r_enable_haptic=rospy.ServiceProxy('right_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
@@ -52,8 +58,10 @@ class toolPickingServer(): #object):
         #Subscribers for MPC
         #rospy.Subscriber('left_arm/haptic_mpc/gripper_pose', PoseStamped, self.lgripperPoseCallback)
         rospy.Subscriber('right_arm/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
-        #rospy.Subscriber('/l_arm_controller/state', JointTrajectoryControllerState, self.ljointStateCallback)
-        rospy.Subscriber('/r_arm_controller/state', JointTrajectoryControllerState, self.rjointStateCallback)
+        rospy.Subscriber('joint_states', JointState, self.jointStateCallback)
+
+        self.r_arm_controller=actionlib.SimpleActionClient('r_arm_controller/joint_trajectory_action', JointTrajectoryAction);
+        self.l_arm_controller=actionlib.SimpleActionClient('l_arm_controller/joint_trajectory_action', JointTrajectoryAction);
 
         #Weights for MPC
         #Orient weight for gripper pose
@@ -70,7 +78,7 @@ class toolPickingServer(): #object):
         self.posture_weights.posture_weight = 1
        
         #Define offsets for pick and place
-        self.offset_pick=(-0.375, 0.02, 0.025)
+        self.offset_pick=(-0.375, -0.03, 0.03)
         self.offset_place_right=(-0.4, -0.06, 0.025)
         self.offset_place_left=(-0.4, 0.14, 0.025)
 
@@ -89,14 +97,11 @@ class toolPickingServer(): #object):
     def lgripperPoseCallback(self, msg):
         self.lgripperPose=msg
 
-    def ljointStateCallback(self, msg):
-        self.ljointState=msg.actual.positions
+    def jointStateCallback(self, msg):
+        self.jointState=msg
 
     def rgripperPoseCallback(self, msg):
         self.rgripperPose=msg
-
-    def rjointStateCallback(self, msg):
-        self.rjointState=msg.actual.positions
  
     def execute_cb(self, goal):
         goal_topic=goal.tag_topic
@@ -131,16 +136,16 @@ class toolPickingServer(): #object):
                 self._feedback.goal_status="Planning successful, executing plan"           
                 self._as.publish_feedback(self._feedback)
                 rospy.loginfo("Planning successful, executing plan")               
-                success=self.execute_plan(plan, arm)
-
+                success=self.execute_plan(plan, arm, True)
+                #butts=self.approach_tool(arm, goal_topic, success)
                 if success:
                     rospy.loginfo("Executing plan successful. Approaching tool.")
                     self._feedback.goal_status="Executing plan successful. Approaching tool."          
                     self._as.publish_feedback(self._feedback)
                 else:
-                    rospy.loginfo("Executing plan failed. Aborting")
                     self._feedback.goal_status="Executing plan failed. Aborting"
-                    self._as.publish_feedback(self.feedback)
+                    self._as.publish_feedback(self._feedback)
+                    rospy.logerr("Executing plan failed. Aborting")
                     self._as.set_aborted()
                 plan=self.approach_tool(arm, goal_topic, success)
                 if plan is False:
@@ -152,14 +157,20 @@ class toolPickingServer(): #object):
                     self._feedback.goal_status="Approaching tool"           
                     self._as.publish_feedback(self._feedback)
                     rospy.loginfo("Approaching tool")                
-                    succeeded=self.execute_plan(plan, arm)        
+                    succeeded=self.execute_plan(plan, arm, True)        
                     if succeeded:           
                         success=self.move_gripper(False, arm)
                         if success:
                             self._feedback.goal_status="Tool Successfully Grasped!"           
                             self._as.publish_feedback(self._feedback)
                             rospy.loginfo("Tool Successfully Grasped!")
-                            self._as.set_success()
+                            plan=self.remove_tool(arm, goal_topic, success)
+                            if plan is not False:
+                                rospy.loginfo("Removing Tool")
+                                succeeded=self.execute_plan(plan, arm, True)
+                                rospy.loginfo("Tool Succcesfully Picked")
+                            else: 
+                                rospy.loginfo("Remove Tool Failed")
                         else:
                             self._feedback.goal_status="Tool picking failed. Tool not grasped. Aborting"           
                             self._as.publish_feedback(self._feedback)
@@ -211,7 +222,7 @@ class toolPickingServer(): #object):
                     rospy.loginfo("Executing plan failed. Aborting")
                     self._feedback.goal_status="Executing plan failed. Aborting"
                     self._as.publish_feedback(self.feedback)
-                    self._as.set_aborted()
+                    #self._as.set_aborted()
 
                 plan=self.approach_tool(arm, goal_topic, success)
                 if plan is False:
@@ -303,13 +314,11 @@ class toolPickingServer(): #object):
                 g.pose.position.y =trans[1]+oy
                 g.pose.position.z=trans[2]+oz
                 q_fin=self.check_angle(current_pose)
-                g.pose.orientation.x =q_fin[0] #should be close to [0, 0, 0, 1] or [1, 0, 0, 0] when base is pointed at tools
+                g.pose.orientation.x =q_fin[0] #should be [0, 0, 0, 1] or [1, 0, 0, 0] when base is pointed at tools
                 g.pose.orientation.y =q_fin[1]
                 g.pose.orientation.z =q_fin[2]
                 g.pose.orientation.w =q_fin[3] 
-                #TODO: Because gripper is symmetrical, check if another equivalent pose is closer to the current configuration.
-                #check [1, 0, 0, 0] (180 rotated) to see which is closer to current joint position
-                    
+                                    
                 print(trans[0])
                 print(trans[1])
                 print(trans[2])
@@ -357,17 +366,17 @@ class toolPickingServer(): #object):
     
     def check_angle(self, current):
         q0=np.array([current.pose.orientation.x,current.pose.orientation.y, current.pose.orientation.z, current.pose.orientation.w])
-        q1=np.array([0, 0, 0, 1])
-        q2=np.array([1, 0, 0, 0])    
-        th1=acos((2*(np.dot(q0,q1))**2)-1) #formula for angle of rotation (in radians) between to quaternions. Handles equivalent quaternions (will return 0 if q0=-q1 for example
+        q1=np.array([0.0, 0.0, 0.0, 1.0])
+        q2=np.array([1.0, 0.0, 0.0, 0.0])    
+        th1=acos((2*(np.dot(q0,q1))**2)-1) #formula for angle of rotation (in radians) between to quaternions. Handles equivalent quaternions (will return 0.0 if q0=-q1 for example
         th2=acos((2*(np.dot(q0,q2))**2)-1)
         if th1>th2:
             return q2
         elif th2>th1:
             return q1
 
-    def execute_plan(self, plan, arm):
-        if plan is not False and not self._as.is_preempt_requested():
+    def execute_plan(self, plan, arm, mpc=True):
+        if plan is not False and not self._as.is_preempt_requested()and not mpc:
             last_time=rospy.Time.now()+self.timeout
             goal=JointTrajectory()            
             if arm is 'r':
@@ -376,55 +385,77 @@ class toolPickingServer(): #object):
                 goal.joint_names=plan.joint_trajectory.joint_names
                 goal.points=plan.joint_trajectory.points
                 self.r_goal_posture_pub.publish(goal)
-                postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)], self.rjointState))                  
-                while not postureErr<0.1 and not self._as.is_preempt_requested():
-                    postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)],self.rjointState))
+                postureErr=np.linalg.norm(np.subtract(plan.joint_trajectory.points[len(plan.joint_trajectory.points)-1].positions, self.rjointState))                  
+                while not postureErr<0.08 and not self._as.is_preempt_requested():
+                    postureErr=np.linalg.norm(np.subtract(plan.joint_trajectory.points[len(plan.joint_trajectory.points)-1].positions,self.rjointState))
                     if rospy.Time.now()>last_time:
                         self._feedback.goal_status='Timeout exceeded'
                         self._as.publish_feedback(self._feedback)
                         return False
                     elif rospy.Time.now()<last_time:
                         continue
-                    self.rate.sleep()
-                return True
+                    rospy.sleep(self.rate)
+                if postureErr<0.1:
+                    return True
+                else:
+                    return False
             elif arm is 'l':
                 self.l_haptic_weights.publish(self.posture_weights)
                 goal.header.stamp=rospy.Time.now()
                 goal.joint_names=plan.joint_trajectory.joint_names
                 goal.points=plan.joint_trajectory.points
                 self.l_goal_posture_pub.publish(goal)
-                postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)], self.ljointState))
+                postureErr=np.linalg.norm(np.subtract(plan.joint_trajectory.points[len(plan.joint_trajectory.points)-1].positions, self.ljointState))
                 while not postureErr<0.1 and not self._as.is_preempt_requested():
-                    postureErr=np.linalg.norm(np.subtract(goal.points.positions[len(goal.points.positions-1)],self.ljointState))
+                    postureErr=np.linalg.norm(np.subtract(plan.joint_trajectory.points[len(plan.joint_trajectory.points)-1].positions,self.ljointState))
                     if rospy.Time.now()>last_time:
-                        self._feedback.goal_status='Timeout exceeded'
-                        self._as.publish_feedback(self._feedback)
+                        print('Timeout exceeded')
                         return False
                     elif rospy.Time.now()<last_time:
                         continue
-                    self.rate.sleep()             
+                    rospy.sleep(self.rate)             
+                return True
+        elif mpc:
+            print("Not using MPC")
+            if arm is 'r':
+                self.group_rightarm.execute(plan)
+                #self.r_enable_haptic('True')
+                return True
+            elif arm is 'l':
+                #self.l_enable_haptic('False')
+                self.group_leftarm.execute(plan)
+                #self.l_enable_haptic('True')
                 return True
         elif self._as.is_preempt_requested():
             rospy.loginfo('%s: Preempted' % self._action_name)
             self._as.set_preempted()
         else:
             return False
-    
+
     def approach_tool(self, arm, goal_topic, success):  #TODO: Make sure this is using the real end effector (wrist_roll_link not the gripper)
         if arm is 'r' and success and not self._as.is_preempt_requested():
-            waypoints0=self.group_rightarm.get_current_pose()            
-            waypoints1=self.group_rightarm.get_current_pose() 
-            waypoints2=self.group_rightarm.get_current_pose() 
-            waypoints3=self.group_rightarm.get_current_pose() 
+            self.group_rightarm.set_start_state_to_current_state()
+            self.group_rightarm.clear_pose_targets()
+            waypoints0=self.group_rightarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+            waypoints0.pose.orientation.x=q1[0]
+            waypoints0.pose.orientation.y=q1[1]
+            waypoints0.pose.orientation.z=q1[2]
+            waypoints0.pose.orientation.w=q1[3]            
+            waypoints1=waypoints0
+            waypoints2=waypoints0
+            waypoints3=waypoints0
+            waypoints4=waypoints0
             print(waypoints1.header.frame_id)
-            #self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
+            
+            self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
-            waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
-            waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
-            eef_step=0.01 #choose a step of 1 cm increments
+            waypoints2.pose.position.x=waypoints2.pose.position.x+0.08
+            waypoints3.pose.position.x=waypoints3.pose.position.x+0.095 
+            eef_step=0.005 #choose a step of 1 cm increments
             jump_threshold=0.0 #choose jump threshold of 0.0
             avoid_collisions=False 
-            print=waypoints1.pose  
+            print(waypoints1.pose)  
             plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions)
             print fraction            
             if len(plan.joint_trajectory.points)<1 or fraction<0.5:
@@ -438,8 +469,8 @@ class toolPickingServer(): #object):
             waypoints3=self.group_leftarm.get_current_pose()  
             #self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
-            waypoints2.pose.position.x=waypoints2.pose.position.x+0.1
-            waypoints3.pose.position.x=waypoints3.pose.position.x+0.15 
+            waypoints2.pose.position.x=waypoints2.pose.position.x+0.08
+            waypoints3.pose.position.x=waypoints3.pose.position.x+0.1 
             eef_step=0.01 #choose a step of 1 cm increments
             jump_threshold=0.0 
             avoid_collisions=False   
@@ -454,6 +485,61 @@ class toolPickingServer(): #object):
             self._as.set_preempted()
         else:
             return False
+
+    def remove_tool(self, arm, goal_topic, success):
+        if arm is 'r' and success and not self._as.is_preempt_requested():
+            self.group_rightarm.set_start_state_to_current_state()
+            self.group_rightarm.clear_pose_targets()
+            waypoints0=self.group_rightarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+            waypoints0.pose.orientation.x=q1[0]
+            waypoints0.pose.orientation.y=q1[1]
+            waypoints0.pose.orientation.z=q1[2]
+            waypoints0.pose.orientation.w=q1[3]            
+            waypoints1=waypoints0
+            waypoints2=waypoints0
+            waypoints3=waypoints0
+            waypoints4=waypoints0
+            print(waypoints1.header.frame_id)
+            
+            self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
+            waypoints1.pose.position.x=waypoints1.pose.position.x-0.05
+            waypoints2.pose.position.x=waypoints2.pose.position.x-0.08
+            waypoints3.pose.position.x=waypoints3.pose.position.x-0.1 
+            eef_step=0.005 #choose a step of 1 cm increments
+            jump_threshold=0.0 #choose jump threshold of 0.0
+            avoid_collisions=False 
+            print(waypoints1.pose)  
+            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions)
+            print fraction            
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+                return False
+            else:
+                return plan
+        elif arm is 'l' and success and not self._as.is_preempt_requested():
+            waypoints0=self.group_leftarm.get_current_pose()            
+            waypoints1=self.group_leftarm.get_current_pose()  
+            waypoints2=self.group_leftarm.get_current_pose()  
+            waypoints3=self.group_leftarm.get_current_pose()  
+            #self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
+            waypoints1.pose.position.x=waypoints1.pose.position.x-0.05
+            waypoints2.pose.position.x=waypoints2.pose.position.x-0.08
+            waypoints3.pose.position.x=waypoints3.pose.position.x-0.1 
+            eef_step=0.01 #choose a step of 1 cm increments
+            jump_threshold=0.0 
+            avoid_collisions=False   
+            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
+            print fraction            
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+                return False
+            else:
+                return plan
+        elif self._as.is_preempt_requested():
+            rospy.loginfo('%s: Preempted' % self._action_name)
+            self._as.set_preempted()
+        else:
+            return False
+    
 
     def move_gripper(self, open_status, arm):
         if open_status and not self._as.is_preempt_requested():  #true is open the gripper
