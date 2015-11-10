@@ -43,7 +43,7 @@ class toolPickingServer(): #object):
 
         #Start action clients for grippers
         self.r_close_gripper_client=actionlib.SimpleActionClient('r_gripper_controller/gripper_action', Pr2GripperCommandAction)
-        #self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
+        self.l_close_gripper_client=actionlib.SimpleActionClient('l_gripper_controller/gripper_action', Pr2GripperCommandAction)
               
         #Services and publishers for Haptic MPC
         #self.l_enable_haptic=rospy.ServiceProxy('left_arm/haptic_mpc/enable_mpc', EnableHapticMPC)
@@ -60,8 +60,8 @@ class toolPickingServer(): #object):
         rospy.Subscriber('right_arm/haptic_mpc/gripper_pose', PoseStamped, self.rgripperPoseCallback)
         rospy.Subscriber('joint_states', JointState, self.jointStateCallback)
 
-        self.r_arm_controller=actionlib.SimpleActionClient('r_arm_controller/joint_trajectory_action', JointTrajectoryAction);
-        self.l_arm_controller=actionlib.SimpleActionClient('l_arm_controller/joint_trajectory_action', JointTrajectoryAction);
+        #self.r_arm_controller=actionlib.SimpleActionClient('r_arm_controller/joint_trajectory_action', JointTrajectoryAction);
+        #self.l_arm_controller=actionlib.SimpleActionClient('l_arm_controller/joint_trajectory_action', JointTrajectoryAction);
 
         #Weights for MPC
         #Orient weight for gripper pose
@@ -78,7 +78,7 @@ class toolPickingServer(): #object):
         self.posture_weights.posture_weight = 1
        
         #Define offsets for pick and place
-        self.offset_pick=(-0.375, -0.03, 0.03)
+        self.offset_pick=(-0.375, -0.045, 0.04)
         self.offset_place_right=(-0.4, -0.06, 0.025)
         self.offset_place_left=(-0.4, 0.14, 0.025)
 
@@ -451,7 +451,7 @@ class toolPickingServer(): #object):
             self.group_rightarm.set_pose_reference_frame(waypoints1.header.frame_id)
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.08
-            waypoints3.pose.position.x=waypoints3.pose.position.x+0.095 
+            waypoints3.pose.position.x=waypoints3.pose.position.x+0.09 
             eef_step=0.005 #choose a step of 1 cm increments
             jump_threshold=0.0 #choose jump threshold of 0.0
             avoid_collisions=False 
@@ -463,15 +463,23 @@ class toolPickingServer(): #object):
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
-            waypoints0=self.group_leftarm.get_current_pose()            
-            waypoints1=self.group_leftarm.get_current_pose()  
-            waypoints2=self.group_leftarm.get_current_pose()  
-            waypoints3=self.group_leftarm.get_current_pose()  
+            self.group_leftarm.set_start_state_to_current_state()
+            self.group_leftarm.clear_pose_targets()            
+            waypoints0=self.group_leftarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+            waypoints0.pose.orientation.x=q1[0]
+            waypoints0.pose.orientation.y=q1[1]
+            waypoints0.pose.orientation.z=q1[2]
+            waypoints0.pose.orientation.w=q1[3]            
+            waypoints1=waypoints0
+            waypoints2=waypoints0
+            waypoints3=waypoints0
+            waypoints4=waypoints0
             #self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
             waypoints1.pose.position.x=waypoints1.pose.position.x+0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x+0.08
             waypoints3.pose.position.x=waypoints3.pose.position.x+0.1 
-            eef_step=0.01 #choose a step of 1 cm increments
+            eef_step=0.005 #choose a step of 1 cm increments
             jump_threshold=0.0 
             avoid_collisions=False   
             plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
@@ -493,7 +501,8 @@ class toolPickingServer(): #object):
             waypoints0=self.group_rightarm.get_current_pose()
             q1=self.check_angle(waypoints0)
             waypoints0.pose.orientation.x=q1[0]
-            waypoints0.pose.orientation.y=q1[1]
+            waypoints0.pose.orientation.y=q1[1
+]
             waypoints0.pose.orientation.z=q1[2]
             waypoints0.pose.orientation.w=q1[3]            
             waypoints1=waypoints0
@@ -517,15 +526,23 @@ class toolPickingServer(): #object):
             else:
                 return plan
         elif arm is 'l' and success and not self._as.is_preempt_requested():
-            waypoints0=self.group_leftarm.get_current_pose()            
-            waypoints1=self.group_leftarm.get_current_pose()  
-            waypoints2=self.group_leftarm.get_current_pose()  
-            waypoints3=self.group_leftarm.get_current_pose()  
+            self.group_leftarm.set_start_state_to_current_state()
+            self.group_leftarm.clear_pose_targets()            
+            waypoints0=self.group_leftarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+            waypoints0.pose.orientation.x=q1[0]
+            waypoints0.pose.orientation.y=q1[1]
+            waypoints0.pose.orientation.z=q1[2]
+            waypoints0.pose.orientation.w=q1[3]            
+            waypoints1=waypoints0
+            waypoints2=waypoints0
+            waypoints3=waypoints0
+            waypoints4=waypoints0
             #self.group_leftarm.set_pose_reference_frame(waypoints1.header.frame_id)            
             waypoints1.pose.position.x=waypoints1.pose.position.x-0.05
             waypoints2.pose.position.x=waypoints2.pose.position.x-0.08
             waypoints3.pose.position.x=waypoints3.pose.position.x-0.1 
-            eef_step=0.01 #choose a step of 1 cm increments
+            eef_step=0.005 #choose a step of 1 cm increments
             jump_threshold=0.0 
             avoid_collisions=False   
             plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose, waypoints3.pose], eef_step, jump_threshold, avoid_collisions )
@@ -589,14 +606,87 @@ class toolPickingServer(): #object):
             else:
                 if result.stalled:
                     self._feedback.goal_status="Gripper successfully closed aroud a tool"                   
-                    self._as.publish_feedback(self._feedback)                    
-                    return True 
+                    self._as.publish_feedback(self._feedback)
+                    print result.position
+                    #if result.position>0.048 and result.position<0.057:
+                    #    rospy.loginfo('Tool not correctly grasped. Initiating recovery behavior')                        
+                    #    succeed=self.recovery('back', arm)
+                    if result.position>0.057:
+                        rospy.loginfo('Tool not correctly grasped. Initiating recovery behavior')    
+                        succeed=self.recovery('down', arm)
+                    else:
+                        succeed=True                    
+                    if succeed:                    
+                        return True
+                    else:
+                        return False 
                 elif result.reached_goal: 
                     self._feedback.goal_status="Did not grasp tool correctly. Try again"   
                     self._as.publish_feedback(self._feedback)                    
                     return False 
                 else:
                     return False
+    def recovery(self, command, arm):
+        success=self.move_gripper(True, arm)
+        if arm is 'r' and success:
+            self.group_rightarm.set_start_state_to_current_state()
+            self.group_rightarm.clear_pose_targets()
+            waypoints0=self.group_rightarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+        elif arm is 'l' and success:
+            self.group_leftarm.set_start_state_to_current_state()
+            self.group_leftarm.clear_pose_targets()            
+            waypoints0=self.group_leftarm.get_current_pose()
+            q1=self.check_angle(waypoints0)
+        elif not success:
+            return False
+        waypoints0.pose.orientation.x=q1[0]
+        waypoints0.pose.orientation.y=q1[1]
+        waypoints0.pose.orientation.z=q1[2]
+        waypoints0.pose.orientation.w=q1[3]            
+        waypoints1=waypoints0
+        waypoints2=waypoints0
+             
+        if command is 'back':
+            waypoints1.pose.position.x=waypoints1.pose.position.x-0.005
+            waypoints2.pose.position.x=waypoints2.pose.position.x-0.01
+            command_ready=True
+        elif command is 'down':
+            waypoints1.pose.position.z=waypoints1.pose.position.z-0.01
+            waypoints2.pose.position.z=waypoints2.pose.position.z-0.02
+            command_ready=True
+        else:
+            return False
+        eef_step=0.005 #choose a step of 1 cm increments
+        jump_threshold=0.0 
+        avoid_collisions=False   
+        if arm is 'r' and command_ready:
+            plan, fraction=self.group_rightarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose], eef_step, jump_threshold, avoid_collisions )
+            print fraction            
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+                return False
+            else:
+                self.group_rightarm.execute(plan)     
+                success=self.move_gripper(False, arm)
+                if success:                
+                    return True
+                else:
+                    return False            
+        elif arm is 'l'and command_ready:            
+            plan, fraction=self.group_leftarm.compute_cartesian_path([waypoints1.pose, waypoints2.pose], eef_step, jump_threshold, avoid_collisions )
+            print fraction            
+            if len(plan.joint_trajectory.points)<1 or fraction<0.5:
+                return False
+            else:
+                self.group_leftarm.execute(plan)     
+                success=sef.move_gripper(False, arm)                
+                if success:                
+                    return True
+                else:
+                    return False
+        else:
+            return False
+        
 #def main():
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
