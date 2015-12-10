@@ -7,7 +7,7 @@ from tf import transformations as tft
 from grab_tool_action.msg import *
 import numpy as np
 
-class GrabToolClient (object):
+class GrabToolClient (object): #sample client for grab_tool server
    
     def __init__ (self):
         self.client=actionlib.SimpleActionClient('grab_tool', GrabToolAction)
@@ -21,9 +21,9 @@ class GrabToolClient (object):
     def run (self):
         self.client.wait_for_server()
         print('done waiting for server')
-        goal=GrabToolGoal()
+        goal=GrabToolGoal()  #sample goal for grab_tool server
         goal.tag_topic='ar_marker_4'
-        goal.arm='l'
+        goal.arm='r'
         goal.pick=True
         self.client.send_goal(goal)
         self.client.wait_for_result()
